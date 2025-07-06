@@ -16,7 +16,7 @@ import {
   ArrowRight,
   AlertCircle 
 } from 'lucide-react';
-import { useAuth } from '@/hooks/useAuth';
+import { useAuth } from '@/hooks/useAuth'; // ← Cambio aquí
 
 // Schema de validación
 const loginSchema = yup.object({
@@ -32,7 +32,7 @@ const loginSchema = yup.object({
 export default function LoginPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  const { login, user, loading } = useAuth();
+  const { login, user, loading } = useAuth(); // ← Función directa del contexto
   const router = useRouter();
 
   // Redirigir si ya está autenticado
@@ -58,6 +58,12 @@ export default function LoginPage() {
 
   // Manejar envío del formulario
   const onSubmit = async (data) => {
+    console.log('🔍 LoginPage: Datos del formulario:', {
+      email: data.email,
+      hasPassword: !!data.password,
+      passwordLength: data.password?.length || 0
+    });
+
     setIsLoading(true);
 
     try {
@@ -83,6 +89,7 @@ export default function LoginPage() {
         }
       }
     } catch (error) {
+      console.error('💥 LoginPage: Error en onSubmit:', error);
       toast.error('Error de conexión. Intenta de nuevo.');
     } finally {
       setIsLoading(false);

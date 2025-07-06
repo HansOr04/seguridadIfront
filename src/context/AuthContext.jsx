@@ -2,7 +2,14 @@
 
 import { createContext, useContext, useReducer, useEffect } from 'react';
 import { authAPI } from '@/lib/api';
-import { getStoredToken, setStoredToken, removeStoredToken, setStoredUser, isTokenExpired } from '@/lib/auth';
+import { 
+  getStoredToken, 
+  setStoredToken, 
+  removeStoredToken, 
+  setStoredUser, 
+  getStoredUser,
+  isTokenExpired 
+} from '@/lib/auth';
 
 // Estados del contexto
 const initialState = {
@@ -74,7 +81,7 @@ function authReducer(state, action) {
 }
 
 // Crear contexto
-const AuthContext = createContext(null);
+export const AuthContext = createContext(null);
 
 // Provider del contexto
 export function AuthProvider({ children }) {
@@ -106,19 +113,56 @@ export function AuthProvider({ children }) {
       }
 
       console.log('🔍 AuthContext: Token válido, verificando con servidor');
-      // Verificar el token con el servidor
-      const response = await authAPI.verifyToken();
       
-      if (response.data?.data?.user) {
-        console.log('✅ AuthContext: Usuario verificado correctamente');
-        const user = response.data.data.user;
-        setStoredUser(user);
+      // Intentar obtener el usuario desde localStorage primero
+      const storedUser = getStoredUser();
+      if (storedUser) {
+        console.log('✅ AuthContext: Usuario encontrado en localStorage');
         dispatch({
           type: AUTH_ACTIONS.LOGIN_SUCCESS,
-          payload: { user },
+          payload: { user: storedUser },
         });
-      } else {
-        console.log('❌ AuthContext: Respuesta de verificación inválida');
+        
+        // Verificar en background si el token sigue siendo válido
+        try {
+          const response = await authAPI.verifyToken();
+          if (response.data?.data?.user) {
+            // Actualizar usuario si hay cambios
+            const serverUser = response.data.data.user;
+            if (JSON.stringify(storedUser) !== JSON.stringify(serverUser)) {
+              console.log('🔄 AuthContext: Actualizando usuario desde servidor');
+              setStoredUser(serverUser);
+              dispatch({
+                type: AUTH_ACTIONS.UPDATE_USER,
+                payload: serverUser,
+              });
+            }
+          }
+        } catch (error) {
+          console.log('⚠️ AuthContext: Error verificando token en background, pero mantiene sesión local');
+        }
+        return;
+      }
+      
+      // Si no hay usuario en localStorage, verificar con el servidor
+      try {
+        const response = await authAPI.verifyToken();
+        
+        if (response.data?.data?.user) {
+          console.log('✅ AuthContext: Usuario verificado desde servidor');
+          const user = response.data.data.user;
+          setStoredUser(user);
+          dispatch({
+            type: AUTH_ACTIONS.LOGIN_SUCCESS,
+            payload: { user },
+          });
+        } else {
+          console.log('❌ AuthContext: Respuesta de verificación inválida');
+          removeStoredToken();
+          dispatch({ type: AUTH_ACTIONS.LOGOUT });
+        }
+      } catch (error) {
+        console.log('❌ AuthContext: Error verificando con servidor');
         removeStoredToken();
         dispatch({ type: AUTH_ACTIONS.LOGOUT });
       }
@@ -162,34 +206,43 @@ export function AuthProvider({ children }) {
 
       console.log('🔍 AuthContext: Verificando tokens:', {
         hasTokensInServerData: !!serverData?.data?.tokens,
-        hasAccessToken: !!serverData?.data?.tokens?.access_token,
-        accessTokenType: typeof serverData?.data?.tokens?.access_token,
-        accessTokenLength: serverData?.data?.tokens?.access_token?.length || 0,
-        tokensStructure: serverData?.data?.tokens ? Object.keys(serverData.data.tokens) : []
+        hasAccessTokenDirect: !!serverData?.data?.access_token,
+        hasAccessTokenInTokens: !!serverData?.data?.tokens?.access_token,
+        accessTokenType: typeof (serverData?.data?.access_token || serverData?.data?.tokens?.access_token),
+        accessTokenLength: (serverData?.data?.access_token || serverData?.data?.tokens?.access_token)?.length || 0
       });
 
-      // Verificar la estructura correcta: response.data.data.tokens.access_token
-      if (serverData?.status === 'success' && serverData?.data?.tokens?.access_token) {
-        console.log('✅ AuthContext: Token encontrado, guardando...');
-        setStoredToken(serverData.data.tokens.access_token);
-        
-        console.log('👤 AuthContext: Actualizando estado con usuario:', {
-          hasUser: !!serverData.data.user,
-          userId: serverData.data.user?.id,
-          userEmail: serverData.data.user?.email,
-          userRole: serverData.data.user?.role
-        });
-        
-        // Guardar usuario también
-        setStoredUser(serverData.data.user);
+      // Verificar la estructura correcta: Buscar el token en ambas ubicaciones posibles
+      let accessToken = null;
+      let user = null;
+
+      if (serverData?.status === 'success' && serverData?.data) {
+        // Buscar token en data.access_token (formato del backend corregido)
+        if (serverData.data.access_token) {
+          console.log('✅ AuthContext: Token encontrado en access_token directo');
+          accessToken = serverData.data.access_token;
+          user = serverData.data.user;
+        }
+        // Buscar token en data.tokens.access_token (formato alternativo)
+        else if (serverData.data.tokens?.access_token) {
+          console.log('✅ AuthContext: Token encontrado en tokens.access_token');
+          accessToken = serverData.data.tokens.access_token;
+          user = serverData.data.user;
+        }
+      }
+
+      if (accessToken && user) {
+        console.log('✅ AuthContext: Token y usuario encontrados, guardando...');
+        setStoredToken(accessToken);
+        setStoredUser(user);
         
         dispatch({
           type: AUTH_ACTIONS.LOGIN_SUCCESS,
-          payload: { user: serverData.data.user },
+          payload: { user },
         });
 
         console.log('🎉 AuthContext: Login exitoso completado');
-        return { success: true, user: serverData.data.user };
+        return { success: true, user };
       } else {
         console.log('❌ AuthContext: Estructura de respuesta incorrecta');
         console.log('📋 AuthContext: Estructura completa:', {
@@ -234,19 +287,33 @@ export function AuthProvider({ children }) {
 
       const serverData = response.data;
 
-      if (serverData?.status === 'success' && serverData?.data?.tokens?.access_token) {
+      // Usar la misma lógica de búsqueda de token que en login
+      let accessToken = null;
+      let user = null;
+
+      if (serverData?.status === 'success' && serverData?.data) {
+        if (serverData.data.access_token) {
+          accessToken = serverData.data.access_token;
+          user = serverData.data.user;
+        } else if (serverData.data.tokens?.access_token) {
+          accessToken = serverData.data.tokens.access_token;
+          user = serverData.data.user;
+        }
+      }
+
+      if (accessToken && user) {
         console.log('✅ AuthContext: Registro exitoso, guardando token');
-        setStoredToken(serverData.data.tokens.access_token);
-        setStoredUser(serverData.data.user);
+        setStoredToken(accessToken);
+        setStoredUser(user);
         
         dispatch({
           type: AUTH_ACTIONS.LOGIN_SUCCESS,
-          payload: { user: serverData.data.user },
+          payload: { user },
         });
 
         return { 
           success: true, 
-          user: serverData.data.user,
+          user,
           organization: serverData.data.organization 
         };
       } else {
@@ -381,15 +448,4 @@ export function AuthProvider({ children }) {
       {children}
     </AuthContext.Provider>
   );
-}
-
-// Hook para usar el contexto
-export function useAuthContext() {
-  const context = useContext(AuthContext);
-  
-  if (!context) {
-    throw new Error('useAuthContext debe ser usado dentro de AuthProvider');
-  }
-  
-  return context;
 }

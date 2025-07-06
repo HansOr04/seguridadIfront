@@ -97,13 +97,31 @@ export const removeStoredToken = () => {
  * Obtener usuario almacenado
  */
 export const getStoredUser = () => {
-  if (typeof window === 'undefined') return null;
+  if (typeof window === 'undefined') {
+    console.log('🔍 Auth: getStoredUser llamado en servidor, retornando null');
+    return null;
+  }
   
   try {
-    const user = localStorage.getItem(USER_KEY);
-    return user ? JSON.parse(user) : null;
+    const userString = localStorage.getItem(USER_KEY);
+    if (!userString) {
+      console.log('📖 Auth: No hay usuario en localStorage');
+      return null;
+    }
+    
+    const user = JSON.parse(userString);
+    console.log('📖 Auth: Usuario obtenido de localStorage:', {
+      hasUser: !!user,
+      userId: user?.id,
+      userEmail: user?.email,
+      userRole: user?.role
+    });
+    
+    return user;
   } catch (error) {
-    console.error('Error parsing stored user:', error);
+    console.error('💥 Auth: Error parsing stored user:', error);
+    // Limpiar datos corruptos
+    localStorage.removeItem(USER_KEY);
     return null;
   }
 };
@@ -112,13 +130,23 @@ export const getStoredUser = () => {
  * Almacenar información del usuario
  */
 export const setStoredUser = (user) => {
-  if (typeof window === 'undefined') return;
+  if (typeof window === 'undefined') {
+    console.log('⚠️ Auth: setStoredUser llamado en servidor, ignorando');
+    return;
+  }
   
   try {
+    console.log('💾 Auth: Guardando usuario:', {
+      hasUser: !!user,
+      userId: user?.id,
+      userEmail: user?.email,
+      userRole: user?.role
+    });
+    
     localStorage.setItem(USER_KEY, JSON.stringify(user));
-    console.log('📝 Auth: Usuario guardado en localStorage');
+    console.log('✅ Auth: Usuario guardado en localStorage');
   } catch (error) {
-    console.error('Error storing user:', error);
+    console.error('💥 Auth: Error storing user:', error);
   }
 };
 
@@ -127,7 +155,8 @@ export const setStoredUser = (user) => {
  */
 export const isAuthenticated = () => {
   const token = getStoredToken();
-  return !!token && !isTokenExpired(token);
+  const user = getStoredUser();
+  return !!token && !!user && !isTokenExpired(token);
 };
 
 /**
@@ -145,12 +174,13 @@ export const isTokenExpired = (token) => {
     console.log('⏰ Auth: Verificación de expiración:', {
       currentTime,
       tokenExp: payload.exp,
-      isExpired
+      isExpired,
+      minutesRemaining: isExpired ? 0 : Math.round((payload.exp - currentTime) / 60)
     });
     
     return isExpired;
   } catch (error) {
-    console.error('Error checking token expiration:', error);
+    console.error('💥 Auth: Error checking token expiration:', error);
     return true;
   }
 };
@@ -164,15 +194,15 @@ export const getTokenInfo = (token) => {
   try {
     const payload = JSON.parse(atob(token.split('.')[1]));
     return {
-      id: payload.id,
+      userId: payload.userId,
       email: payload.email,
       role: payload.role,
-      organization: payload.organization,
+      organizationId: payload.organizationId,
       exp: payload.exp,
       iat: payload.iat,
     };
   } catch (error) {
-    console.error('Error parsing token:', error);
+    console.error('💥 Auth: Error parsing token:', error);
     return null;
   }
 };
