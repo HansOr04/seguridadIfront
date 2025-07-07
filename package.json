@@ -37,6 +37,7 @@
     "react-dropzone": "^14.3.8",
     "react-hook-form": "^7.52.1",
     "react-hot-toast": "^2.4.1",
+    "recharts": "^3.0.2",
     "yup": "^1.4.0"
   },
   "devDependencies": {
