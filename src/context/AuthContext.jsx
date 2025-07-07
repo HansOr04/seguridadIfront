@@ -229,6 +229,12 @@ export function AuthProvider({ children }) {
           accessToken = serverData.data.tokens.access_token;
           user = serverData.data.user;
         }
+        // Buscar token en data.token (formato simple)
+        else if (serverData.data.token) {
+          console.log('✅ AuthContext: Token encontrado en token directo');
+          accessToken = serverData.data.token;
+          user = serverData.data.user;
+        }
       }
 
       if (accessToken && user) {
@@ -298,6 +304,9 @@ export function AuthProvider({ children }) {
         } else if (serverData.data.tokens?.access_token) {
           accessToken = serverData.data.tokens.access_token;
           user = serverData.data.user;
+        } else if (serverData.data.token) {
+          accessToken = serverData.data.token;
+          user = serverData.data.user;
         }
       }
 
@@ -311,16 +320,11 @@ export function AuthProvider({ children }) {
           payload: { user },
         });
 
-        return { 
-          success: true, 
-          user,
-          organization: serverData.data.organization 
-        };
+        return { success: true, user };
       } else {
-        throw new Error('No se recibió token de acceso');
+        throw new Error('No se recibió token de acceso válido');
       }
     } catch (error) {
-      console.log('💥 AuthContext: Error en registro:', error.message);
       const errorMessage = error.response?.data?.message || 
                           error.message || 
                           'Error al registrar organización';
@@ -338,114 +342,189 @@ export function AuthProvider({ children }) {
   const logout = async () => {
     try {
       console.log('🚪 AuthContext: Iniciando logout');
-      await authAPI.logout();
+      
+      // Intentar logout en el servidor
+      try {
+        await authAPI.logout();
+      } catch (error) {
+        console.log('⚠️ AuthContext: Error en logout del servidor, continuando con logout local');
+      }
+      
+      // Limpiar almacenamiento local
+      removeStoredToken();
+      
+      // Actualizar estado
+      dispatch({ type: AUTH_ACTIONS.LOGOUT });
+      
+      console.log('✅ AuthContext: Logout completado');
     } catch (error) {
-      console.error('💥 AuthContext: Error al hacer logout:', error.message);
-    } finally {
-      console.log('🧹 AuthContext: Limpiando datos locales');
+      console.error('💥 AuthContext: Error en logout:', error);
+      // Forzar logout local aunque haya error
       removeStoredToken();
       dispatch({ type: AUTH_ACTIONS.LOGOUT });
     }
   };
 
-  // Actualizar perfil de usuario
+  // Función para actualizar perfil
   const updateProfile = async (profileData) => {
     try {
-      console.log('✏️ AuthContext: Actualizando perfil');
+      console.log('👤 AuthContext: Actualizando perfil');
+      dispatch({ type: AUTH_ACTIONS.SET_LOADING, payload: true });
+      
       const response = await authAPI.updateProfile(profileData);
       
-      const updatedUser = response.data.data.user;
-      setStoredUser(updatedUser);
-      
-      dispatch({
-        type: AUTH_ACTIONS.UPDATE_USER,
-        payload: updatedUser,
-      });
-
-      return { success: true, user: updatedUser };
+      if (response.data?.status === 'success' && response.data?.data?.user) {
+        const updatedUser = response.data.data.user;
+        
+        // Actualizar usuario en localStorage
+        setStoredUser(updatedUser);
+        
+        // Actualizar estado
+        dispatch({
+          type: AUTH_ACTIONS.UPDATE_USER,
+          payload: updatedUser,
+        });
+        
+        console.log('✅ AuthContext: Perfil actualizado exitosamente');
+        return { success: true, user: updatedUser };
+      } else {
+        throw new Error('Respuesta inválida del servidor');
+      }
     } catch (error) {
-      console.log('💥 AuthContext: Error actualizando perfil:', error.message);
+      console.error('💥 AuthContext: Error actualizando perfil:', error);
+      
       const errorMessage = error.response?.data?.message || 
+                          error.message || 
                           'Error al actualizar perfil';
       
+      dispatch({
+        type: AUTH_ACTIONS.SET_ERROR,
+        payload: errorMessage,
+      });
+      
       return { success: false, error: errorMessage };
+    } finally {
+      dispatch({ type: AUTH_ACTIONS.SET_LOADING, payload: false });
     }
   };
 
-  // Cambiar contraseña
+  // Función para cambiar contraseña
   const changePassword = async (passwordData) => {
     try {
       console.log('🔐 AuthContext: Cambiando contraseña');
+      dispatch({ type: AUTH_ACTIONS.SET_LOADING, payload: true });
+      
       const response = await authAPI.changePassword(passwordData);
-      return { success: true, message: response.data.message };
+      
+      if (response.data?.status === 'success') {
+        console.log('✅ AuthContext: Contraseña cambiada exitosamente');
+        return { success: true };
+      } else {
+        throw new Error('Respuesta inválida del servidor');
+      }
     } catch (error) {
-      console.log('💥 AuthContext: Error cambiando contraseña:', error.message);
+      console.error('💥 AuthContext: Error cambiando contraseña:', error);
+      
       const errorMessage = error.response?.data?.message || 
+                          error.message || 
                           'Error al cambiar contraseña';
       
-      return { success: false, error: errorMessage };
-    }
-  };
-
-  // Recuperar contraseña
-  const forgotPassword = async (email) => {
-    try {
-      console.log('📧 AuthContext: Enviando email de recuperación');
-      const response = await authAPI.forgotPassword({ email });
-      return { success: true, message: response.data.message };
-    } catch (error) {
-      console.log('💥 AuthContext: Error en recuperación:', error.message);
-      const errorMessage = error.response?.data?.message || 
-                          'Error al enviar email de recuperación';
+      dispatch({
+        type: AUTH_ACTIONS.SET_ERROR,
+        payload: errorMessage,
+      });
       
       return { success: false, error: errorMessage };
+    } finally {
+      dispatch({ type: AUTH_ACTIONS.SET_LOADING, payload: false });
     }
   };
 
-  // Resetear contraseña
-  const resetPassword = async (token, newPassword) => {
-    try {
-      console.log('🔄 AuthContext: Reseteando contraseña');
-      const response = await authAPI.resetPassword({ token, newPassword });
-      return { success: true, message: response.data.message };
-    } catch (error) {
-      console.log('💥 AuthContext: Error reseteando contraseña:', error.message);
-      const errorMessage = error.response?.data?.message || 
-                          'Error al resetear contraseña';
-      
-      return { success: false, error: errorMessage };
-    }
-  };
-
-  // Limpiar errores
+  // Función para limpiar errores
   const clearError = () => {
-    console.log('🧹 AuthContext: Limpiando errores');
     dispatch({ type: AUTH_ACTIONS.CLEAR_ERROR });
   };
 
-  // Valor del contexto
-  const value = {
-    // Estado
-    user: state.user,
-    loading: state.loading,
-    error: state.error,
-    isAuthenticated: state.isAuthenticated,
+  // Función para refrescar token
+  const refreshToken = async () => {
+    try {
+      const response = await authAPI.refreshToken();
+      
+      if (response.data?.status === 'success' && response.data?.data?.token) {
+        const newToken = response.data.data.token;
+        setStoredToken(newToken);
+        return { success: true, token: newToken };
+      }
+      
+      return { success: false, error: 'No se pudo refrescar el token' };
+    } catch (error) {
+      console.error('💥 AuthContext: Error refrescando token:', error);
+      return { success: false, error: error.message };
+    }
+  };
+
+  // Verificar si el usuario tiene permisos específicos
+  const hasPermission = (permission) => {
+    if (!state.user) return false;
     
-    // Funciones
+    const userRole = state.user.role;
+    
+    // Super admin tiene todos los permisos
+    if (userRole === 'super_admin') return true;
+    
+    // Mapeo de permisos por rol
+    const rolePermissions = {
+      admin: ['create', 'read', 'update', 'delete', 'manage_users', 'manage_organization'],
+      analyst: ['create', 'read', 'update', 'analyze_risks', 'generate_reports'],
+      viewer: ['read', 'view_reports']
+    };
+    
+    return rolePermissions[userRole]?.includes(permission) || false;
+  };
+
+  // Verificar si el usuario tiene un rol específico
+  const hasRole = (role) => {
+    return state.user?.role === role;
+  };
+
+  // Valor del contexto
+  const contextValue = {
+    // Estado
+    ...state,
+    
+    // Acciones de autenticación
     login,
     logout,
     registerOrganization,
+    
+    // Gestión de perfil
     updateProfile,
     changePassword,
-    forgotPassword,
-    resetPassword,
+    
+    // Utilidades
     clearError,
-    checkAuthStatus,
+    refreshToken,
+    hasPermission,
+    hasRole,
+    
+    // Verificación de estado
+    checkAuthStatus
   };
 
   return (
-    <AuthContext.Provider value={value}>
+    <AuthContext.Provider value={contextValue}>
       {children}
     </AuthContext.Provider>
   );
 }
+
+// Hook personalizado para usar el contexto
+export const useAuth = () => {
+  const context = useContext(AuthContext);
+  
+  if (!context) {
+    throw new Error('useAuth debe usarse dentro de un AuthProvider');
+  }
+  
+  return context;
+};

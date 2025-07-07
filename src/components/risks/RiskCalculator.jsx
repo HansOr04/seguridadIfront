@@ -1,5 +1,3 @@
-'use client';
-
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Calculator, 
@@ -28,7 +26,6 @@ import { useThreats } from '../../hooks/useThreats';
 import { useVulnerabilities } from '../../hooks/useVulnerabilities';
 import { useRisks } from '../../hooks/useRisks';
 import { formatPercentage, formatCurrency } from '../../lib/formatters';
-import { motion, AnimatePresence } from 'framer-motion';
 import toast from 'react-hot-toast';
 
 const CALCULATION_STEPS = [
@@ -47,64 +44,110 @@ const RiskCalculator = () => {
   const [isCalculating, setIsCalculating] = useState(false);
   const [errors, setErrors] = useState({});
 
-  const { assets, searchAssets } = useAssets();
-  const { threats, getThreatsByAsset } = useThreats();
-  const { vulnerabilities, getVulnerabilitiesByAsset } = useVulnerabilities();
+  const { assets, loading: assetsLoading } = useAssets();
+  const { 
+    threats, 
+    getThreatsByAsset, 
+    loading: threatsLoading 
+  } = useThreats();
+  const { 
+    vulnerabilities, 
+    getVulnerabilitiesByAsset, 
+    loading: vulnerabilitiesLoading 
+  } = useVulnerabilities();
   const { calculateRisk, saveRisk } = useRisks();
 
-  // Filtrar amenazas aplicables al activo seleccionado
-  const applicableThreats = useMemo(() => {
-    if (!selectedAsset) return [];
-    return getThreatsByAsset(selectedAsset.id);
+  // Estados de carga por paso
+  const [applicableThreats, setApplicableThreats] = useState([]);
+  const [applicableVulnerabilities, setApplicableVulnerabilities] = useState([]);
+  const [loadingThreats, setLoadingThreats] = useState(false);
+  const [loadingVulnerabilities, setLoadingVulnerabilities] = useState(false);
+
+  // Cargar amenazas cuando se selecciona un activo
+  useEffect(() => {
+    if (selectedAsset) {
+      setLoadingThreats(true);
+      getThreatsByAsset(selectedAsset._id, selectedAsset.type)
+        .then(threats => {
+          setApplicableThreats(threats || []);
+        })
+        .catch(error => {
+          console.error('Error loading threats:', error);
+          toast.error('Error al cargar amenazas aplicables');
+          setApplicableThreats([]);
+        })
+        .finally(() => {
+          setLoadingThreats(false);
+        });
+    } else {
+      setApplicableThreats([]);
+    }
   }, [selectedAsset, getThreatsByAsset]);
 
-  // Filtrar vulnerabilidades del activo seleccionado
-  const applicableVulnerabilities = useMemo(() => {
-    if (!selectedAsset) return [];
-    return getVulnerabilitiesByAsset(selectedAsset.id);
+  // Cargar vulnerabilidades cuando se selecciona un activo
+  useEffect(() => {
+    if (selectedAsset) {
+      setLoadingVulnerabilities(true);
+      getVulnerabilitiesByAsset(selectedAsset._id)
+        .then(vulnerabilities => {
+          setApplicableVulnerabilities(vulnerabilities || []);
+        })
+        .catch(error => {
+          console.error('Error loading vulnerabilities:', error);
+          toast.error('Error al cargar vulnerabilidades aplicables');
+          setApplicableVulnerabilities([]);
+        })
+        .finally(() => {
+          setLoadingVulnerabilities(false);
+        });
+    } else {
+      setApplicableVulnerabilities([]);
+    }
   }, [selectedAsset, getVulnerabilitiesByAsset]);
 
   // Calcular preview del riesgo en tiempo real
   const riskPreview = useMemo(() => {
     if (!selectedAsset || !selectedThreat || !selectedVulnerability) return null;
 
-    // Cálculo simplificado para preview (el real se hace en el backend)
-    const threatProbability = selectedThreat.adjustedProbability || selectedThreat.baseProbability;
-    const vulnerabilityLevel = selectedVulnerability.vulnerabilityLevel;
-    const aggregatedImpact = calculateAggregatedImpact(selectedAsset, selectedVulnerability);
-    
-    const baseRisk = threatProbability * vulnerabilityLevel * aggregatedImpact;
-    const temporalFactor = 1.1; // Simplificado
-    const environmentalFactor = 1.0; // Simplificado
-    const adjustedRisk = Math.min(baseRisk * temporalFactor * environmentalFactor, 1.0);
+    try {
+      // Cálculo simplificado para preview (el real se hace en el backend)
+      const threatProbability = selectedThreat.adjustedProbability || selectedThreat.baseProbability || 0.5;
+      const vulnerabilityLevel = selectedVulnerability.vulnerabilityLevel || 0.5;
+      const aggregatedImpact = calculateAggregatedImpact(selectedAsset, selectedVulnerability);
+      
+      const baseRisk = threatProbability * vulnerabilityLevel * aggregatedImpact;
+      const temporalFactor = 1.1; // Simplificado
+      const environmentalFactor = 1.0; // Simplificado
+      const adjustedRisk = Math.min(baseRisk * temporalFactor * environmentalFactor, 1.0);
 
-    return {
-      threatProbability,
-      vulnerabilityLevel,
-      aggregatedImpact,
-      baseRisk,
-      adjustedRisk,
-      riskLevel: getRiskLevel(adjustedRisk),
-      economicImpact: (selectedAsset.economicValue || 0) * adjustedRisk
-    };
+      return {
+        threatProbability,
+        vulnerabilityLevel,
+        aggregatedImpact,
+        baseRisk,
+        adjustedRisk,
+        riskLevel: getRiskLevel(adjustedRisk),
+        economicImpact: (selectedAsset.economicValue || 0) * adjustedRisk
+      };
+    } catch (error) {
+      console.error('Error calculating risk preview:', error);
+      return null;
+    }
   }, [selectedAsset, selectedThreat, selectedVulnerability]);
 
   const calculateAggregatedImpact = (asset, vulnerability) => {
-    if (!asset.valuation || !vulnerability.affectedDimensions) return 0.5;
+    if (!asset.valuation) return 0.5;
 
     const dimensions = ['confidentiality', 'integrity', 'availability', 'authenticity', 'traceability'];
-    let totalWeightedImpact = 0;
-    let totalWeight = 0;
+    let maxImpact = 0;
 
     dimensions.forEach(dimension => {
       const assetValue = (asset.valuation[dimension] || 0) / 10; // Normalizar 0-10 a 0-1
-      const vulnerabilityImpact = vulnerability.affectedDimensions[dimension]?.impact || 0;
-      
-      totalWeightedImpact += assetValue * vulnerabilityImpact;
-      totalWeight += assetValue;
+      const vulnerabilityImpact = vulnerability.affectedDimensions?.[dimension]?.impact || assetValue;
+      maxImpact = Math.max(maxImpact, assetValue * vulnerabilityImpact);
     });
 
-    return totalWeight > 0 ? totalWeightedImpact / totalWeight : 0.5;
+    return Math.max(maxImpact, 0.1); // Mínimo 0.1
   };
 
   const getRiskLevel = (risk) => {
@@ -156,9 +199,9 @@ const RiskCalculator = () => {
     setIsCalculating(true);
     try {
       const result = await calculateRisk({
-        assetId: selectedAsset.id,
-        threatId: selectedThreat.id,
-        vulnerabilityId: selectedVulnerability.id
+        assetId: selectedAsset._id,
+        threatId: selectedThreat._id,
+        vulnerabilityId: selectedVulnerability._id
       });
       
       setCalculationResult(result);
@@ -179,6 +222,8 @@ const RiskCalculator = () => {
     setSelectedVulnerability(null);
     setCalculationResult(null);
     setErrors({});
+    setApplicableThreats([]);
+    setApplicableVulnerabilities([]);
   };
 
   const handleSaveRisk = async () => {
@@ -254,64 +299,62 @@ const RiskCalculator = () => {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           {/* Main Content */}
           <div className="lg:col-span-2">
-            <AnimatePresence mode="wait">
-              <motion.div
-                key={currentStep}
-                initial={{ opacity: 0, x: 20 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: -20 }}
-                transition={{ duration: 0.3 }}
-              >
-                {currentStep === 0 && (
-                  <AssetSelectionStep
-                    assets={assets}
-                    selectedAsset={selectedAsset}
-                    onSelect={setSelectedAsset}
-                    error={errors.asset}
-                  />
-                )}
+            {/* Step 0: Asset Selection */}
+            {currentStep === 0 && (
+              <AssetSelectionStep
+                assets={assets}
+                selectedAsset={selectedAsset}
+                onSelect={setSelectedAsset}
+                error={errors.asset}
+                loading={assetsLoading}
+              />
+            )}
 
-                {currentStep === 1 && (
-                  <ThreatSelectionStep
-                    threats={applicableThreats}
-                    selectedThreat={selectedThreat}
-                    onSelect={setSelectedThreat}
-                    error={errors.threat}
-                    asset={selectedAsset}
-                  />
-                )}
+            {/* Step 1: Threat Selection */}
+            {currentStep === 1 && (
+              <ThreatSelectionStep
+                threats={applicableThreats}
+                selectedThreat={selectedThreat}
+                onSelect={setSelectedThreat}
+                error={errors.threat}
+                asset={selectedAsset}
+                loading={loadingThreats}
+              />
+            )}
 
-                {currentStep === 2 && (
-                  <VulnerabilitySelectionStep
-                    vulnerabilities={applicableVulnerabilities}
-                    selectedVulnerability={selectedVulnerability}
-                    onSelect={setSelectedVulnerability}
-                    error={errors.vulnerability}
-                    asset={selectedAsset}
-                  />
-                )}
+            {/* Step 2: Vulnerability Selection */}
+            {currentStep === 2 && (
+              <VulnerabilitySelectionStep
+                vulnerabilities={applicableVulnerabilities}
+                selectedVulnerability={selectedVulnerability}
+                onSelect={setSelectedVulnerability}
+                error={errors.vulnerability}
+                asset={selectedAsset}
+                loading={loadingVulnerabilities}
+              />
+            )}
 
-                {currentStep === 3 && (
-                  <ReviewStep
-                    asset={selectedAsset}
-                    threat={selectedThreat}
-                    vulnerability={selectedVulnerability}
-                    preview={riskPreview}
-                    onCalculate={handleCalculate}
-                    isCalculating={isCalculating}
-                    error={errors.calculation}
-                  />
-                )}
+            {/* Step 3: Review */}
+            {currentStep === 3 && (
+              <ReviewStep
+                asset={selectedAsset}
+                threat={selectedThreat}
+                vulnerability={selectedVulnerability}
+                preview={riskPreview}
+                onCalculate={handleCalculate}
+                isCalculating={isCalculating}
+                error={errors.calculation}
+              />
+            )}
 
-                {currentStep === 4 && calculationResult && (
-                  <ResultsStep
-                    result={calculationResult}
-                    onSave={handleSaveRisk}
-                    onReset={handleReset}
-                  />
-                )}
-              </motion.div>
-            </AnimatePresence>
+            {/* Results Step */}
+            {currentStep === 4 && calculationResult && (
+              <ResultsStep
+                result={calculationResult}
+                onSave={handleSaveRisk}
+                onReset={handleReset}
+              />
+            )}
           </div>
 
           {/* Sidebar */}
@@ -459,13 +502,23 @@ const getRiskColor = (level) => {
 };
 
 // Componentes de pasos individuales
-const AssetSelectionStep = ({ assets, selectedAsset, onSelect, error }) => {
+const AssetSelectionStep = ({ assets, selectedAsset, onSelect, error, loading }) => {
   const [searchTerm, setSearchTerm] = useState('');
   
   const filteredAssets = assets.filter(asset =>
     asset.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    asset.code.toLowerCase().includes(searchTerm.toLowerCase()) ||
     asset.type.toLowerCase().includes(searchTerm.toLowerCase())
   );
+
+  if (loading) {
+    return (
+      <div className="text-center py-8">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600 mx-auto mb-4"></div>
+        <p className="text-gray-600">Cargando activos...</p>
+      </div>
+    );
+  }
 
   return (
     <div>
@@ -490,10 +543,10 @@ const AssetSelectionStep = ({ assets, selectedAsset, onSelect, error }) => {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-h-96 overflow-y-auto">
         {filteredAssets.map((asset) => (
           <div
-            key={asset.id}
+            key={asset._id}
             onClick={() => onSelect(asset)}
             className={`p-4 border-2 rounded-lg cursor-pointer transition-all ${
-              selectedAsset?.id === asset.id
+              selectedAsset?._id === asset._id
                 ? 'border-primary-500 bg-primary-50'
                 : 'border-gray-200 hover:border-gray-300'
             }`}
@@ -523,7 +576,16 @@ const AssetSelectionStep = ({ assets, selectedAsset, onSelect, error }) => {
   );
 };
 
-const ThreatSelectionStep = ({ threats, selectedThreat, onSelect, error, asset }) => {
+const ThreatSelectionStep = ({ threats, selectedThreat, onSelect, error, asset, loading }) => {
+  if (loading) {
+    return (
+      <div className="text-center py-8">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600 mx-auto mb-4"></div>
+        <p className="text-gray-600">Cargando amenazas aplicables...</p>
+      </div>
+    );
+  }
+
   return (
     <div>
       <h3 className="text-lg font-medium text-gray-900 mb-4">
@@ -539,10 +601,10 @@ const ThreatSelectionStep = ({ threats, selectedThreat, onSelect, error, asset }
       <div className="space-y-3 max-h-96 overflow-y-auto">
         {threats.map((threat) => (
           <div
-            key={threat.id}
+            key={threat._id}
             onClick={() => onSelect(threat)}
             className={`p-4 border-2 rounded-lg cursor-pointer transition-all ${
-              selectedThreat?.id === threat.id
+              selectedThreat?._id === threat._id
                 ? 'border-primary-500 bg-primary-50'
                 : 'border-gray-200 hover:border-gray-300'
             }`}
@@ -580,7 +642,16 @@ const ThreatSelectionStep = ({ threats, selectedThreat, onSelect, error, asset }
   );
 };
 
-const VulnerabilitySelectionStep = ({ vulnerabilities, selectedVulnerability, onSelect, error, asset }) => {
+const VulnerabilitySelectionStep = ({ vulnerabilities, selectedVulnerability, onSelect, error, asset, loading }) => {
+  if (loading) {
+    return (
+      <div className="text-center py-8">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600 mx-auto mb-4"></div>
+        <p className="text-gray-600">Cargando vulnerabilidades...</p>
+      </div>
+    );
+  }
+
   return (
     <div>
       <h3 className="text-lg font-medium text-gray-900 mb-4">
@@ -596,10 +667,10 @@ const VulnerabilitySelectionStep = ({ vulnerabilities, selectedVulnerability, on
       <div className="space-y-3 max-h-96 overflow-y-auto">
         {vulnerabilities.map((vulnerability) => (
           <div
-            key={vulnerability.id}
+            key={vulnerability._id}
             onClick={() => onSelect(vulnerability)}
             className={`p-4 border-2 rounded-lg cursor-pointer transition-all ${
-              selectedVulnerability?.id === vulnerability.id
+              selectedVulnerability?._id === vulnerability._id
                 ? 'border-primary-500 bg-primary-50'
                 : 'border-gray-200 hover:border-gray-300'
             }`}
@@ -831,141 +902,6 @@ const ResultsStep = ({ result, onSave, onReset }) => {
         </div>
       </div>
 
-      {/* Detailed Results */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
-        {/* Calculation Breakdown */}
-        <div className="bg-white border border-gray-200 rounded-lg p-6">
-          <h4 className="text-lg font-medium text-gray-900 mb-4 flex items-center">
-            <Calculator className="h-5 w-5 mr-2" />
-            Desglose del Cálculo
-          </h4>
-          
-          <div className="space-y-3">
-            <div className="flex justify-between">
-              <span className="text-gray-600">Probabilidad de Amenaza:</span>
-              <span className="font-medium">{formatPercentage(result.calculation?.threatProbability)}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-gray-600">Nivel de Vulnerabilidad:</span>
-              <span className="font-medium">{formatPercentage(result.calculation?.vulnerabilityLevel)}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-gray-600">Impacto Agregado:</span>
-              <span className="font-medium">{formatPercentage(result.calculation?.aggregatedImpact)}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-gray-600">Factor Temporal:</span>
-              <span className="font-medium">{result.calculation?.temporalFactor?.toFixed(2) || '1.00'}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-gray-600">Factor Ambiental:</span>
-              <span className="font-medium">{result.calculation?.environmentalFactor?.toFixed(2) || '1.00'}</span>
-            </div>
-            <div className="border-t pt-3 mt-3">
-              <div className="flex justify-between text-lg font-bold">
-                <span>Riesgo Base:</span>
-                <span>{formatPercentage(result.calculation?.baseRisk)}</span>
-              </div>
-              <div className="flex justify-between text-lg font-bold text-primary-600">
-                <span>Riesgo Ajustado:</span>
-                <span>{formatPercentage(result.calculation?.adjustedRisk)}</span>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Impact Analysis */}
-        <div className="bg-white border border-gray-200 rounded-lg p-6">
-          <h4 className="text-lg font-medium text-gray-900 mb-4 flex items-center">
-            <TrendingUp className="h-5 w-5 mr-2" />
-            Análisis de Impacto
-          </h4>
-          
-          <div className="space-y-3">
-            {result.calculation?.impact && Object.entries(result.calculation.impact).map(([dimension, value]) => (
-              <div key={dimension} className="flex items-center justify-between">
-                <span className="text-gray-600 capitalize">
-                  {getDimensionLabel(dimension)}:
-                </span>
-                <div className="flex items-center">
-                  <div className="w-20 bg-gray-200 rounded-full h-2 mr-2">
-                    <div 
-                      className={`h-2 rounded-full bg-${getDimensionColor(dimension)}-500`}
-                      style={{ width: `${value * 100}%` }}
-                    ></div>
-                  </div>
-                  <span className="font-medium w-12 text-right">{formatPercentage(value)}</span>
-                </div>
-              </div>
-            ))}
-          </div>
-
-          {result.calculation?.economicImpact && (
-            <div className="mt-6 pt-4 border-t">
-              <h5 className="font-medium text-gray-900 mb-2">Impacto Económico</h5>
-              <div className="space-y-2 text-sm">
-                <div className="flex justify-between">
-                  <span className="text-gray-600">Pérdida Potencial:</span>
-                  <span className="font-medium">{formatCurrency(result.calculation.economicImpact.potentialLoss)}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-600">Pérdida Esperada:</span>
-                  <span className="font-medium">{formatCurrency(result.calculation.economicImpact.expectedLoss)}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-600">Pérdida Anualizada:</span>
-                  <span className="font-medium">{formatCurrency(result.calculation.economicImpact.annualizedLoss)}</span>
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Treatment Recommendations */}
-      <div className="bg-white border border-gray-200 rounded-lg p-6 mb-6">
-        <h4 className="text-lg font-medium text-gray-900 mb-4 flex items-center">
-          <Shield className="h-5 w-5 mr-2" />
-          Recomendaciones de Tratamiento
-        </h4>
-        
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div>
-            <h5 className="font-medium text-gray-900 mb-2">Estrategia Recomendada</h5>
-            <div className={`inline-block px-3 py-1 rounded-full text-sm font-medium ${
-              result.treatment?.strategy === 'mitigate' ? 'bg-blue-100 text-blue-800' :
-              result.treatment?.strategy === 'accept' ? 'bg-green-100 text-green-800' :
-              result.treatment?.strategy === 'transfer' ? 'bg-yellow-100 text-yellow-800' :
-              'bg-red-100 text-red-800'
-            }`}>
-              {getStrategyLabel(result.treatment?.strategy)}
-            </div>
-          </div>
-          
-          <div>
-            <h5 className="font-medium text-gray-900 mb-2">Prioridad</h5>
-            <div className={`inline-block px-3 py-1 rounded-full text-sm font-medium ${
-              result.treatment?.priority === 'critical' ? 'bg-red-100 text-red-800' :
-              result.treatment?.priority === 'high' ? 'bg-orange-100 text-orange-800' :
-              result.treatment?.priority === 'medium' ? 'bg-yellow-100 text-yellow-800' :
-              'bg-green-100 text-green-800'
-            }`}>
-              {result.treatment?.priority?.toUpperCase()}
-            </div>
-          </div>
-        </div>
-
-        <div className="mt-4 text-sm text-gray-600">
-          <p><strong>Próximos pasos:</strong></p>
-          <ul className="list-disc list-inside mt-2 space-y-1">
-            <li>Documentar el riesgo en el registro organizacional</li>
-            <li>Definir controles específicos para mitigar el riesgo</li>
-            <li>Establecer métricas de monitoreo continuo</li>
-            <li>Programar revisiones periódicas del riesgo</li>
-          </ul>
-        </div>
-      </div>
-
       {/* Action Buttons */}
       <div className="flex flex-col sm:flex-row gap-4 justify-center">
         <button
@@ -1016,38 +952,6 @@ const getRiskLevelLabel = (level) => {
     very_low: 'Muy Bajo'
   };
   return labels[level] || 'No Definido';
-};
-
-const getDimensionLabel = (dimension) => {
-  const labels = {
-    confidentiality: 'Confidencialidad',
-    integrity: 'Integridad',
-    availability: 'Disponibilidad',
-    authenticity: 'Autenticidad',
-    traceability: 'Trazabilidad'
-  };
-  return labels[dimension] || dimension;
-};
-
-const getDimensionColor = (dimension) => {
-  const colors = {
-    confidentiality: 'blue',
-    integrity: 'purple',
-    availability: 'green',
-    authenticity: 'yellow',
-    traceability: 'pink'
-  };
-  return colors[dimension] || 'gray';
-};
-
-const getStrategyLabel = (strategy) => {
-  const labels = {
-    accept: 'Aceptar',
-    mitigate: 'Mitigar',
-    transfer: 'Transferir',
-    avoid: 'Evitar'
-  };
-  return labels[strategy] || 'No Definida';
 };
 
 export default RiskCalculator;

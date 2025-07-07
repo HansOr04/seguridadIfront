@@ -1,7 +1,7 @@
 'use client';
 
 import { Suspense } from 'react';
-import RiskCalculator from '../../../../components/risks/RiskCalculator';
+import RiskCalculator from '../../../../../components/risks/RiskCalculator';
 
 export default function RiskCalculatorPage() {
   return (
